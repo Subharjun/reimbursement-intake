@@ -11,22 +11,18 @@ Local dev:
 
 Render / production env vars:
     UIPATH_ACCESS_TOKEN      — UiPath PAT (Orchestrator scope)
-    SMTP_USER                — Gmail address to send FROM  e.g. you@gmail.com
-    SMTP_APP_PASSWORD        — Gmail App Password (16-char, not your login password)
+    RESEND_API_KEY           — Resend API key (free tier OK, get at resend.com)
 """
 
+import base64
 import json
 import os
 import re
-import smtplib
 import uuid
-from email import encoders
-from email.mime.base import MIMEBase
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 
 import httpx
+import resend
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,9 +57,7 @@ CASE_RELEASE_KEY = os.getenv(
 
 # ── Email config ──────────────────────────────────────────────────────────────
 
-NOTIFY_TO   = "i.am.mir.jasim@gmail.com"
-SMTP_USER   = os.getenv("SMTP_USER", "")
-SMTP_PASS   = os.getenv("SMTP_APP_PASSWORD", "")
+NOTIFY_TO = "i.am.mir.jasim@gmail.com"
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -149,9 +143,9 @@ async def _start_case(token: str, inputs: dict) -> str | None:
     return str(key) if key else None
 
 
-# ── Notification email ────────────────────────────────────────────────────────
+# ── Notification email (Resend) ───────────────────────────────────────────────
 
-def _build_email(
+def _send_notification_email(
     employee_name: str,
     employee_email: str,
     expense_type: str,
@@ -162,57 +156,52 @@ def _build_email(
     vendor: str,
     receipt_name: str | None,
     receipt_bytes: bytes | None,
-) -> MIMEMultipart:
-    msg = MIMEMultipart()
-    msg["From"]    = SMTP_USER
-    msg["To"]      = NOTIFY_TO
-    msg["Subject"] = f"{expense_type} Reimbursement Request"
+) -> None:
+    """Send intake notification email via Resend — best-effort, never raises. Runs as FastAPI BackgroundTask."""
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    if not api_key:
+        print("[email] RESEND_API_KEY not set — skipping notification")
+        return
+
+    resend.api_key = api_key
 
     body = (
         f"Dear Finance Team,\n\n"
         f"I am submitting my {expense_type.lower()} reimbursement request for the recent official travel. "
         f"Please find the attached {expense_type.lower()} bills for your reference.\n\n"
-        f"Total amount: {currency} {amount:.2f} "
-        f"Date of expense: {date} "
-        f"Purpose: {purpose} "
-        f"employe name {employee_name} and "
-        f"Employe emai is {employee_email}\n\n"
+        f"Total amount: {currency} {amount:.2f}\n"
+        f"Date of expense: {date}\n"
+        f"Purpose: {purpose}\n"
+        f"Vendor: {vendor}\n\n"
+        f"employe name {employee_name} and Employe emai is {employee_email}\n\n"
         f"Kindly process the reimbursement at the earliest convenience. "
         f"Please let me know if any additional details or documents are required.\n\n"
         f"Thank you for your support.\n\n"
         f"Best regards,\n"
         f"{employee_name}"
     )
-    msg.attach(MIMEText(body, "plain"))
+
+    params: resend.Emails.SendParams = {
+        "from": "Reimbursement Portal <onboarding@resend.dev>",
+        "to": [NOTIFY_TO],
+        "subject": f"{expense_type} Reimbursement Request",
+        "text": body,
+    }
 
     if receipt_bytes and receipt_name:
-        part = MIMEBase("application", "octet-stream")
-        part.set_payload(receipt_bytes)
-        encoders.encode_base64(part)
-        part.add_header("Content-Disposition", f'attachment; filename="{receipt_name}"')
-        msg.attach(part)
+        params["attachments"] = [
+            {
+                "filename": receipt_name,
+                "content": base64.b64encode(receipt_bytes).decode(),
+            }
+        ]
 
-    return msg
-
-
-def _smtp_send(msg: MIMEMultipart) -> None:
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
-        server.login(SMTP_USER, SMTP_PASS)
-        server.sendmail(SMTP_USER, NOTIFY_TO, msg.as_string())
-
-
-def _send_notification_email(**kwargs) -> None:
-    """Send intake notification email — best-effort, never raises. Runs as FastAPI BackgroundTask."""
-    if not SMTP_USER or not SMTP_PASS:
-        print("[email] SMTP_USER or SMTP_APP_PASSWORD not configured — skipping notification")
-        return
-    print(f"[email] Sending notification to {NOTIFY_TO} from {SMTP_USER}…")
+    print(f"[email] Sending to {NOTIFY_TO} via Resend…")
     try:
-        msg = _build_email(**kwargs)
-        _smtp_send(msg)
-        print(f"[email] Notification sent OK to {NOTIFY_TO}")
+        result = resend.Emails.send(params)
+        print(f"[email] Notification sent OK — id={result.get('id')}")
     except Exception as exc:
-        print(f"[email] notification failed (non-fatal): {exc}")
+        print(f"[email] Resend error (non-fatal): {exc}")
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
