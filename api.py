@@ -57,7 +57,7 @@ CASE_RELEASE_KEY = os.getenv(
 
 # ── Email config ──────────────────────────────────────────────────────────────
 
-NOTIFY_TO = "i.am.mir.jasim@gmail.com"
+NOTIFY_TO = "akashgomez28@gmail.com"
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
