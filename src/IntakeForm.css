@@ -239,13 +239,14 @@
 }
 
 .currency-select {
-  width: 90px;
-  flex-shrink: 0;
+  flex: 0 0 90px;
+  width: 90px !important;
   padding-right: 1.8rem !important;
 }
 
 .amount-input {
-  flex: 1;
+  flex: 1 1 0%;
+  width: 0 !important;
   min-width: 0;
 }
 
