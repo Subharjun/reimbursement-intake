@@ -128,7 +128,8 @@ async def _start_case(token: str, inputs: dict) -> str | None:
     body = {
         "startInfo": {
             "ReleaseKey": CASE_RELEASE_KEY,
-            "Strategy": "All",
+            "Strategy": "ModernJobsCount",
+            "JobsCount": 1,
             "InputArguments": json.dumps(inputs),
         }
     }
