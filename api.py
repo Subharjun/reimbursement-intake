@@ -107,7 +107,10 @@ async def _upload_to_bucket(token: str, filename: str, content: bytes) -> str:
         put_r = await client.put(
             r.json()["Uri"],
             content=content,
-            headers={"Content-Type": "application/octet-stream"},
+            headers={
+                "Content-Type": "application/octet-stream",
+                "x-ms-blob-type": "BlockBlob",
+            },
         )
         if put_r.status_code not in (200, 201, 204):
             raise HTTPException(502, f"Bucket PUT failed: {put_r.status_code} {put_r.text[:300]}")

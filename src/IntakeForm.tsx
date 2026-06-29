@@ -360,9 +360,8 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                 <input
                   id="amount"
                   name="amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="0.00"
                   value={fields.amount}
                   onChange={handleChange}
