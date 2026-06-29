@@ -3,20 +3,28 @@ Reimbursement Intake API — FastAPI backend
 
 Receives the expense form, uploads the receipt to the UiPath storage bucket,
 then starts the Maestro Case via the Orchestrator REST API (no uip CLI needed).
+After a successful submission it sends a notification email to the finance team.
 
 Local dev:
     pip install -r requirements.txt
     uvicorn api:app --reload --port 8000
 
-Render / production:
-    UIPATH_ACCESS_TOKEN=<token>  # run `uip auth token` locally to get it
-    The React dist/ is built by the Dockerfile and served at / by this process.
+Render / production env vars:
+    UIPATH_ACCESS_TOKEN      — UiPath PAT (Orchestrator scope)
+    SMTP_USER                — Gmail address to send FROM  e.g. you@gmail.com
+    SMTP_APP_PASSWORD        — Gmail App Password (16-char, not your login password)
 """
 
+import asyncio
 import json
 import os
 import re
+import smtplib
 import uuid
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 
 import httpx
@@ -44,25 +52,24 @@ UIPATH_BASE_URL = os.getenv(
     "https://staging.uipath.com/hackathon26_332/DefaultTenant",
 )
 
-# Numeric folder id for the AgentHack team folder (bucket operations)
 UIPATH_FOLDER_ID = os.getenv("UIPATH_FOLDER_ID", "3054578")
-
-# Numeric folder id for the Maestro Case subfolder (job start)
-# Shared/UiPath AgentHack_2026/ReimbursementProcessMaestro  id=3154132
 UIPATH_CASE_FOLDER_NUMERIC_ID = os.getenv("UIPATH_CASE_FOLDER_NUMERIC_ID", "3154132")
-
 BUCKET_ID = int(os.getenv("UIPATH_BUCKET_ID", "199727"))
-
 CASE_RELEASE_KEY = os.getenv(
     "UIPATH_CASE_RELEASE_KEY",
     "8602dfb7-4304-4768-b853-544f1ef7d972",
 )
 
+# ── Email config ──────────────────────────────────────────────────────────────
+
+NOTIFY_TO   = "i.am.mir.jasim@gmail.com"
+SMTP_USER   = os.getenv("SMTP_USER", "")
+SMTP_PASS   = os.getenv("SMTP_APP_PASSWORD", "")
+
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def _get_token() -> str:
-    """Return UiPath bearer token — env var first, local auth file as dev fallback."""
     token = os.getenv("UIPATH_ACCESS_TOKEN", "").strip()
     if token:
         return token
@@ -120,10 +127,6 @@ async def _upload_to_bucket(token: str, filename: str, content: bytes) -> str:
 # ── Maestro Case trigger ──────────────────────────────────────────────────────
 
 async def _start_case(token: str, inputs: dict) -> str | None:
-    """
-    Start the Maestro Case via the Orchestrator OData Jobs REST API.
-    No uip CLI dependency — pure httpx.
-    """
     url = (
         f"{UIPATH_BASE_URL}/orchestrator_/odata/Jobs"
         "/UiPath.Server.Configuration.OData.StartJobs"
@@ -145,6 +148,69 @@ async def _start_case(token: str, inputs: dict) -> str | None:
     jobs = data.get("value", [data])
     key = jobs[0].get("Key") or jobs[0].get("Id") if jobs else None
     return str(key) if key else None
+
+
+# ── Notification email ────────────────────────────────────────────────────────
+
+def _build_email(
+    employee_name: str,
+    employee_email: str,
+    expense_type: str,
+    currency: str,
+    amount: float,
+    date: str,
+    purpose: str,
+    vendor: str,
+    receipt_name: str | None,
+    receipt_bytes: bytes | None,
+) -> MIMEMultipart:
+    msg = MIMEMultipart()
+    msg["From"]    = SMTP_USER
+    msg["To"]      = NOTIFY_TO
+    msg["Subject"] = f"{expense_type} Reimbursement Request"
+
+    body = (
+        f"Dear Finance Team,\n\n"
+        f"I am submitting my {expense_type.lower()} reimbursement request for the recent official travel. "
+        f"Please find the attached bills for your reference.\n\n"
+        f"Total amount: {currency} {amount:.2f}  "
+        f"Date of expense: {date}  "
+        f"Purpose: {purpose}  "
+        f"Employee name: {employee_name} and "
+        f"Employee email is {employee_email}\n\n"
+        f"Kindly process the reimbursement at the earliest convenience. "
+        f"Please let me know if any additional details or documents are required.\n\n"
+        f"Thank you for your support.\n\n"
+        f"Best regards,\n"
+        f"{employee_name}"
+    )
+    msg.attach(MIMEText(body, "plain"))
+
+    if receipt_bytes and receipt_name:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(receipt_bytes)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", f'attachment; filename="{receipt_name}"')
+        msg.attach(part)
+
+    return msg
+
+
+def _smtp_send(msg: MIMEMultipart) -> None:
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as server:
+        server.login(SMTP_USER, SMTP_PASS)
+        server.sendmail(SMTP_USER, NOTIFY_TO, msg.as_string())
+
+
+async def _send_notification_email(**kwargs) -> None:
+    """Send intake notification email — best-effort, never raises."""
+    if not SMTP_USER or not SMTP_PASS:
+        return
+    try:
+        msg = _build_email(**kwargs)
+        await asyncio.to_thread(_smtp_send, msg)
+    except Exception as exc:
+        print(f"[email] notification failed (non-fatal): {exc}")
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
@@ -178,10 +244,14 @@ async def submit(
 
     document_attached = False
     attachment_name: str | None = None
+    receipt_raw: bytes | None = None
+    receipt_original_name: str | None = None
+
     if receipt and receipt.filename:
-        raw = await receipt.read()
-        if raw:
-            attachment_name = await _upload_to_bucket(token, receipt.filename, raw)
+        receipt_raw = await receipt.read()
+        if receipt_raw:
+            receipt_original_name = receipt.filename
+            attachment_name = await _upload_to_bucket(token, receipt.filename, receipt_raw)
             document_attached = True
 
     reason = (
@@ -206,6 +276,21 @@ async def submit(
     }
 
     job_id = await _start_case(token, case_inputs)
+
+    # Fire notification email — non-blocking, never fails the submission
+    asyncio.create_task(_send_notification_email(
+        employee_name=employeeName,
+        employee_email=employeeEmail,
+        expense_type=expenseType,
+        currency=currency,
+        amount=amt,
+        date=date,
+        purpose=purpose,
+        vendor=vendor,
+        receipt_name=receipt_original_name,
+        receipt_bytes=receipt_raw,
+    ))
+
     return {
         "case_id": str(uuid.uuid4()),
         "job_id": job_id,
