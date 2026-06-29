@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import type { ChangeEvent, FormEvent, DragEvent } from 'react';
+import type { ChangeEvent, DragEvent } from 'react';
 import './IntakeForm.css';
 
 const EXPENSE_TYPES = [
@@ -55,6 +55,7 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
   const [receipt, setReceipt] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' });
+  const [triedSubmit, setTriedSubmit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = (
@@ -88,19 +89,32 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
     applyFile(e.dataTransfer.files?.[0]);
   };
 
-  const isValid =
-    fields.employeeEmail.trim() &&
-    fields.employeeName.trim() &&
-    fields.expenseType &&
-    fields.vendor.trim() &&
-    fields.amount.trim() &&
-    Number(fields.amount) > 0 &&
-    fields.date.trim() &&
-    fields.purpose.trim();
+  const fieldErrors = {
+    employeeName: !fields.employeeName.trim() ? 'Full name is required.' : '',
+    employeeEmail: !fields.employeeEmail.trim() ? 'Employee email is required.' : '',
+    expenseType: !fields.expenseType ? 'Please select an expense type.' : '',
+    vendor: !fields.vendor.trim() ? 'Vendor / merchant is required.' : '',
+    amount: !fields.amount.trim() || Number(fields.amount) <= 0 ? 'Enter a valid amount greater than 0.' : '',
+    date: !fields.date.trim() ? 'Date of expense is required.' : '',
+    purpose: !fields.purpose.trim() ? 'Business purpose is required.' : '',
+  };
 
-  const handleSubmit = async (e: FormEvent) => {
+  const isValid = Object.values(fieldErrors).every((e) => !e);
+
+  const err = (field: keyof typeof fieldErrors) =>
+    triedSubmit && fieldErrors[field] ? (
+      <span className="field-error">{fieldErrors[field]}</span>
+    ) : null;
+
+  const hasErr = (field: keyof typeof fieldErrors) =>
+    triedSubmit && !!fieldErrors[field];
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!isValid) return;
+    if (!isValid) {
+      setTriedSubmit(true);
+      return;
+    }
     setSubmitState({ status: 'submitting' });
 
     const body = new FormData();
@@ -260,7 +274,9 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                 onChange={handleChange}
                 required
                 autoComplete="name"
+                className={hasErr('employeeName') ? 'input-error' : ''}
               />
+              {err('employeeName')}
             </div>
             <div className="form-group">
               <label htmlFor="employeeEmail">Employee Email <span className="req">*</span></label>
@@ -273,7 +289,9 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                 onChange={handleChange}
                 required
                 autoComplete="email"
+                className={hasErr('employeeEmail') ? 'input-error' : ''}
               />
+              {err('employeeEmail')}
             </div>
             <div className="form-group">
               <label htmlFor="managerEmail">Manager Email</label>
@@ -302,12 +320,14 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                 value={fields.expenseType}
                 onChange={handleChange}
                 required
+                className={hasErr('expenseType') ? 'input-error' : ''}
               >
                 <option value="" disabled>Select a category…</option>
                 {EXPENSE_TYPES.map((t) => (
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
+              {err('expenseType')}
             </div>
             <div className="form-group">
               <label htmlFor="vendor">Vendor / Merchant <span className="req">*</span></label>
@@ -319,7 +339,9 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                 value={fields.vendor}
                 onChange={handleChange}
                 required
+                className={hasErr('vendor') ? 'input-error' : ''}
               />
+              {err('vendor')}
             </div>
             <div className="form-group form-group--amount">
               <label htmlFor="amount">Amount <span className="req">*</span></label>
@@ -345,9 +367,10 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                   value={fields.amount}
                   onChange={handleChange}
                   required
-                  className="amount-input"
+                  className={`amount-input${hasErr('amount') ? ' input-error' : ''}`}
                 />
               </div>
+              {err('amount')}
             </div>
             <div className="form-group">
               <label htmlFor="date">Date of Expense <span className="req">*</span></label>
@@ -359,7 +382,9 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
                 onChange={handleChange}
                 max={new Date().toISOString().split('T')[0]}
                 required
+                className={hasErr('date') ? 'input-error' : ''}
               />
+              {err('date')}
             </div>
           </div>
           <div className="form-group form-group--full">
@@ -372,7 +397,9 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
               value={fields.purpose}
               onChange={handleChange}
               required
+              className={hasErr('purpose') ? 'input-error' : ''}
             />
+            {err('purpose')}
           </div>
         </section>
 
@@ -444,7 +471,7 @@ function IntakeForm({ darkTheme, onToggleTheme }: IntakeFormProps) {
           <button
             type="submit"
             className="outcome-btn outcome-btn--primary"
-            disabled={!isValid || submitState.status === 'submitting'}
+            disabled={submitState.status === 'submitting'}
           >
             {submitState.status === 'submitting' ? (
               <>

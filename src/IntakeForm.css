@@ -354,6 +354,25 @@
   color: #fca5a5;
 }
 
+/* ===== Inline field validation ===== */
+.input-error {
+  border-color: #ef4444 !important;
+  background: #fff5f5;
+}
+.dark .input-error {
+  background: #1f0707;
+}
+.field-error {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  color: #b91c1c;
+  font-weight: 500;
+}
+.dark .field-error {
+  color: #fca5a5;
+}
+
 /* ===== Footer ===== */
 .form-buttons {
   display: flex;
