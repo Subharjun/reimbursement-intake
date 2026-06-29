@@ -15,7 +15,6 @@ Render / production env vars:
     SMTP_APP_PASSWORD        — Gmail App Password (16-char, not your login password)
 """
 
-import asyncio
 import json
 import os
 import re
@@ -29,7 +28,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -202,13 +201,16 @@ def _smtp_send(msg: MIMEMultipart) -> None:
         server.sendmail(SMTP_USER, NOTIFY_TO, msg.as_string())
 
 
-async def _send_notification_email(**kwargs) -> None:
-    """Send intake notification email — best-effort, never raises."""
+def _send_notification_email(**kwargs) -> None:
+    """Send intake notification email — best-effort, never raises. Runs as FastAPI BackgroundTask."""
     if not SMTP_USER or not SMTP_PASS:
+        print("[email] SMTP_USER or SMTP_APP_PASSWORD not configured — skipping notification")
         return
+    print(f"[email] Sending notification to {NOTIFY_TO} from {SMTP_USER}…")
     try:
         msg = _build_email(**kwargs)
-        await asyncio.to_thread(_smtp_send, msg)
+        _smtp_send(msg)
+        print(f"[email] Notification sent OK to {NOTIFY_TO}")
     except Exception as exc:
         print(f"[email] notification failed (non-fatal): {exc}")
 
@@ -222,6 +224,7 @@ def health():
 
 @app.post("/api/submit")
 async def submit(
+    background_tasks: BackgroundTasks,
     employeeName: str = Form(...),
     employeeEmail: str = Form(...),
     managerEmail: str = Form(""),
@@ -277,8 +280,9 @@ async def submit(
 
     job_id = await _start_case(token, case_inputs)
 
-    # Fire notification email — non-blocking, never fails the submission
-    asyncio.create_task(_send_notification_email(
+    # Fire notification email after response — FastAPI BackgroundTasks is GC-safe
+    background_tasks.add_task(
+        _send_notification_email,
         employee_name=employeeName,
         employee_email=employeeEmail,
         expense_type=expenseType,
@@ -289,7 +293,7 @@ async def submit(
         vendor=vendor,
         receipt_name=receipt_original_name,
         receipt_bytes=receipt_raw,
-    ))
+    )
 
     return {
         "case_id": str(uuid.uuid4()),
