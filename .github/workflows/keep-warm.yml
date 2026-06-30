@@ -1,0 +1,26 @@
+name: keep-warm
+
+# Pings the Render service so the free-tier instance never spins down
+# (Render sleeps after ~15 min idle, causing a 5-10s cold start). Hitting
+# the lightweight /api/health endpoint on a schedule keeps it awake.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes (GitHub cron is best-effort)
+  workflow_dispatch: {} # allow manual "wake it now" runs
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+              https://reimbursement-intake.onrender.com/api/health || echo "000")
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "service did not return 200 after 3 attempts"
+          exit 1
