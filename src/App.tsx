@@ -10,7 +10,7 @@ function SplashScreen({ fading }: { fading: boolean }) {
       <div className="splash-inner">
         <div className="splash-logo">
           <span className="splash-logo-icon">⚡</span>
-          <span className="splash-logo-text">ReimbursementIQ</span>
+          <span className="splash-logo-text">ClaimAgent</span>
         </div>
         <p className="splash-tagline">AI-powered expense reimbursement</p>
         <div className="splash-bar-track">
